@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Momentum</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#F2EFF9}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(123,111,224,.3);border-radius:3px}
+input,select,textarea,button{font-family:inherit}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback}=React;
+
+// ─── Storage ──────────────────────────────────────────────────────────────────
+const KEY="momentum_v8";
+const load=()=>{try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):null;}catch{return null;}};
+const save=(s)=>{try{localStorage.setItem(KEY,JSON.stringify(s));}catch{}};
+
+// ─── Built-in tracks (always present) ────────────────────────────────────────
+const BUILTIN_TRACKS={
+  sat: {name:"SAT Prep",color:"#7B6FE0",light:"#ECEAFF",icon:"✏️",builtin:true},
+  res: {name:"Research",color:"#2EAF7D",light:"#E0F5EC",icon:"🔬",builtin:true},
+  gwc: {name:"Girls Who Code",color:"#D4608A",light:"#FCEAF2",icon:"💻",builtin:true},
+  frc: {name:"FRC / Java",color:"#D4841A",light:"#FEF0D8",icon:"🤖",builtin:true},
+  yolo:{name:"YOLO + RPi",color:"#4AA8D4",light:"#E0F4FD",icon:"📷",builtin:true},
+  int: {name:"Internship",color:"#6D5FD4",light:"#ECEAFF",icon:"💼",builtin:true},
+  vln: {name:"Violin",color:"#C45A3A",light:"#FDEAE4",icon:"🎻",builtin:true},
+  vol: {name:"Volunteering",color:"#E06B2E",light:"#FEF0E4",icon:"🤝",builtin:true},
+  bio: {name:"Biomed",color:"#1B8A6B",light:"#DFF5EE",icon:"🧬",builtin:true},
+  sch: {name:"School",color:"#888880",light:"#F0EEE8",icon:"📚",builtin:true},
+  soc: {name:"Social",color:"#C4703A",light:"#FEEADA",icon:"👥",builtin:true},
+};
+
+const PHASE1_LOCKED=["gwc","frc","yolo","int"];
+const FLOWERS=["🌸","🌺","🌼","🌻","🌷","💐","🪷","🌹"];
+const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const today=()=>new Date().toISOString().slice(0,10);
+const DAILY_LIMIT_FULL=()=>5;
+
+const GRASS=["Step outside for 5 minutes — your brain will thank you.","Put the screen down and touch some actual grass.","Go outside — even just the front steps count.","Eyes off screen, feet on ground. Just 5 minutes.","Sunshine break! You've more than earned it.","A walk around the block beats another scroll session.","Stand outside and look at something far away.","Fresh air loading… please proceed to nearest exit.","Your future self thanks you for this little break.","Water a plant. Look at the sky. Come back refreshed.","Close the laptop. Feel the wind. Back in 5.","Even 3 minutes of sunlight resets your focus."];
+
+function seededShuffle(arr,seed){const a=[...arr];let s=seed;for(let i=a.length-1;i>0;i--){s=(s*1664525+1013904223)&0xffffffff;const j=Math.abs(s)%(i+1);[a[i],a[j]]=[a[j],a[i]];}return a;}
+function dateSeed(){return today().split("-").reduce((acc,n)=>acc*31+parseInt(n),0);}
+
+// ─── Default state ────────────────────────────────────────────────────────────
+function defaults(){
+  return{
+    dark:false,phase:1,streak:0,lastDate:null,capDate:null,cap:null,
+    projTitle:"",nextId:200,vlnGoalMins:30,volHoursGoal:10,
+    customTracks:{}, // user-added tracks: {key:{name,color,light,icon}}
+    intHours:{
+      Mon:{s:"09:00",e:"17:00",off:false},Tue:{s:"09:00",e:"17:00",off:false},
+      Wed:{s:"09:00",e:"17:00",off:false},Thu:{s:"09:00",e:"17:00",off:false},
+      Fri:{s:"09:00",e:"17:00",off:false},
+    },
+    tasks:[
+      {id:1,name:"Reading comprehension drill",track:"sat",mins:45,cap:"any",subs:[{t:"Passages 1-2",done:false},{t:"Passages 3-5",done:false},{t:"Review wrong answers",done:false}],done:false},
+      {id:2,name:"Narrow research question",track:"res",mins:30,cap:"any",subs:[{t:"Brainstorm 3 topics",done:false},{t:"Pick the strongest one",done:false}],done:false},
+      {id:3,name:"SAT math timed section",track:"sat",mins:60,cap:"full",subs:[{t:"Complete all problems",done:false},{t:"Score & log it",done:false},{t:"Review every error",done:false}],done:false},
+      {id:8,name:"Violin practice",track:"vln",mins:30,cap:"any",subs:[{t:"Scales warmup",done:false},{t:"Current piece",done:false},{t:"Sight-reading",done:false}],done:false},
+    ],
+    school:[
+      {id:50,name:"AP Lang final essay",cls:"AP Lang",due:"2025-06-10",mins:90,subs:[{t:"Outline",done:true},{t:"Draft",done:false},{t:"Proofread",done:false}]},
+    ],
+    social:[{id:60,name:"Movie night",date:"2025-05-18",time:"19:00",who:"Maya, Jordan"}],
+    satLog:[],vlnLog:[],
+    volLog:[], // {id,date,org,hours,desc}
+    biomLectures:[], // {id,date,title,notes,watched:false}
+    biomAssignments:[], // {id,name,due,mins,subs:[],done:false}
+    rj:{ideas:[{t:"Study urban heat island effects",date:"2025-05-15"}],questions:[{t:"How does green space reduce urban temperature?",date:"2025-05-15"}],sources:[],notes:[],timeline:[{name:"Choose research topic",date:"2025-05-20"},{name:"First mentor meeting",date:"2025-06-05"}],todo:[{t:"Email potential mentor",done:false}]},
+    colleges:[],scholarships:[],map:{},
+  };
+}
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+const mkT=(dark)=>dark?{
+  bg:"#16121F",surf:"#201C2E",surf2:"#2A2540",border:"#3D3760",
+  text:"#EDE8FF",sub:"#A89FCC",mute:"#6B6290",
+  acc:"#9B8FFF",accBg:"#2D2850",accText:"#C8C0FF",
+  streakBg:"#2A1F0A",streakT:"#FFB347",grassBg:"#0D2018",grassT:"#5DCA8A",
+  inp:"#1A1530",success:"#2EAF7D",danger:"#E24B4A",
+  tb:(t,allTracks)=>`${allTracks[t]?.color||"#888"}28`,tc:(t,allTracks)=>allTracks[t]?.color||"#888",
+}:{
+  bg:"#F2EFF9",surf:"#FFFFFF",surf2:"#EDE9F8",border:"#DDD8EE",
+  text:"#1E1840",sub:"#5E5480",mute:"#A89FC4",
+  acc:"#7B6FE0",accBg:"#ECEAFF",accText:"#4A3FAA",
+  streakBg:"#FFF5E0",streakT:"#9A6A0A",grassBg:"#EAF8F0",grassT:"#1A7A50",
+  inp:"#F8F6FF",success:"#1A9060",danger:"#C0392B",
+  tb:(t,allTracks)=>allTracks[t]?.light||"#F0EEE8",tc:(t,allTracks)=>allTracks[t]?.color||"#888",
+};
+
+// ─── Shared UI ────────────────────────────────────────────────────────────────
+const Tag=({track,T,allTracks})=>(
+  <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700,padding:"2px 9px",borderRadius:20,background:T.tb(track,allTracks),color:T.tc(track,allTracks)}}>
+    {allTracks[track]?.icon} {allTracks[track]?.name||track}
+  </span>
+);
+
+const PBar=({pct,color,h=5,style={}})=>(
+  <div style={{height:h,borderRadius:3,background:"rgba(128,128,128,.15)",overflow:"hidden",...style}}>
+    <div style={{height:"100%",width:`${Math.min(100,Math.max(0,pct))}%`,background:color,borderRadius:3,transition:"width .4s"}}/>
+  </div>
+);
+
+const Chk=({done,onClick,T})=>(
+  <div onClick={e=>{e.stopPropagation();onClick();}} style={{width:18,height:18,borderRadius:5,border:done?"none":`2px solid ${T.border}`,background:done?T.success:"transparent",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+    {done&&<svg width="11" height="9"><polyline points="1,5 4,8 10,1" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+  </div>
+);
+
+const SH=({children,T,style={}})=><div style={{fontSize:11,fontWeight:700,color:T.mute,letterSpacing:".07em",textTransform:"uppercase",marginBottom:7,...style}}>{children}</div>;
+
+function Card({children,style={},onClick}){const T=window.__T;return<div onClick={onClick} style={{background:T.surf,border:`1px solid ${T.border}`,borderRadius:12,padding:"13px 15px",...style}}>{children}</div>;}
+function Inp({value,onChange,placeholder,type="text",style={},onKeyDown,disabled=false}){const T=window.__T;return<input type={type} value={value} onChange={onChange} placeholder={placeholder} onKeyDown={onKeyDown} disabled={disabled} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:disabled?T.surf2:T.inp,color:T.text,width:"100%",fontFamily:"inherit",...style}}/>;}
+function Sel({value,onChange,children,style={}}){const T=window.__T;return<select value={value} onChange={onChange} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:T.inp,color:T.text,width:"100%",fontFamily:"inherit",...style}}>{children}</select>;}
+function BtnP({children,onClick,style={}}){const T=window.__T;return<button onClick={onClick} style={{fontSize:13,padding:"7px 16px",border:"none",borderRadius:8,background:T.acc,color:"#fff",cursor:"pointer",fontFamily:"inherit",fontWeight:700,...style}}>{children}</button>;}
+function BtnN({children,onClick,style={}}){const T=window.__T;return<button onClick={onClick} style={{fontSize:13,padding:"7px 14px",border:`1px solid ${T.border}`,borderRadius:8,background:T.surf,color:T.text,cursor:"pointer",fontFamily:"inherit",...style}}>{children}</button>;}
+function BtnDanger({children,onClick,style={}}){const T=window.__T;return<button onClick={onClick} style={{fontSize:12,padding:"5px 12px",border:`1px solid ${T.danger}`,borderRadius:8,background:"transparent",color:T.danger,cursor:"pointer",fontFamily:"inherit",...style}}>{children}</button>;}
+function Lbl({children}){const T=window.__T;return<div style={{fontSize:12,color:T.sub,marginBottom:3}}>{children}</div>;}
+const G2=({children,style={}})=><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,...style}}>{children}</div>;
+const G3=({children,style={}})=><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,...style}}>{children}</div>;
+const Row=({children,style={}})=><div style={{display:"flex",flexDirection:"column",gap:8,...style}}>{children}</div>;
+
+// ─── Task Modal ───────────────────────────────────────────────────────────────
+function TaskModal({taskId,S,upd,onClose,allTracks}){
+  const T=window.__T;
+  const isSchool=!!S.school.find(a=>a.id===taskId);
+  const isBiom=!!S.biomAssignments?.find(a=>a.id===taskId);
+  const task=isSchool?S.school.find(a=>a.id===taskId):isBiom?S.biomAssignments.find(a=>a.id===taskId):S.tasks.find(t=>t.id===taskId);
+  if(!task)return null;
+  const track=isSchool?"sch":isBiom?"bio":task.track;
+  const color=allTracks[track]?.color||"#888";
+  const doneSubs=task.subs.filter(s=>s.done).length;
+  const p=task.subs.length?Math.round(doneSubs/task.subs.length*100):(task.done?100:0);
+  const [editingSubIdx,setEditingSubIdx]=useState(null);
+  const [editingSubText,setEditingSubText]=useState("");
+  const [newSubText,setNewSubText]=useState("");
+
+  function toggleSub(si){upd(s=>{
+    const getArr=()=>isSchool?[...s.school]:isBiom?[...s.biomAssignments]:[...s.tasks];
+    const key=isSchool?"school":isBiom?"biomAssignments":"tasks";
+    const arr=getArr();const idx=arr.findIndex(x=>x.id===taskId);
+    const item={...arr[idx],subs:arr[idx].subs.map((sub,i)=>i===si?{...sub,done:!sub.done}:sub)};
+    arr[idx]=item;return{...s,[key]:arr};
+  });}
+  function renameSub(si){
+    if(!editingSubText.trim()){setEditingSubIdx(null);return;}
+    upd(s=>{
+      const key=isSchool?"school":isBiom?"biomAssignments":"tasks";
+      const arr=[...s[key]];const idx=arr.findIndex(x=>x.id===taskId);
+      arr[idx]={...arr[idx],subs:arr[idx].subs.map((sub,i)=>i===si?{...sub,t:editingSubText.trim()}:sub)};
+      return{...s,[key]:arr};
+    });setEditingSubIdx(null);
+  }
+  function deleteSub(si){upd(s=>{
+    const key=isSchool?"school":isBiom?"biomAssignments":"tasks";
+    const arr=[...s[key]];const idx=arr.findIndex(x=>x.id===taskId);
+    arr[idx]={...arr[idx],subs:arr[idx].subs.filter((_,i)=>i!==si)};
+    return{...s,[key]:arr};
+  });}
+  function addSub(){
+    if(!newSubText.trim())return;
+    upd(s=>{
+      const key=isSchool?"school":isBiom?"biomAssignments":"tasks";
+      const arr=[...s[key]];const idx=arr.findIndex(x=>x.id===taskId);
+      arr[idx]={...arr[idx],subs:[...arr[idx].subs,{t:newSubText.trim(),done:false}]};
+      return{...s,[key]:arr};
+    });setNewSubText("");
+  }
+  function toggleDone(){upd(s=>({...s,tasks:s.tasks.map(t=>t.id===taskId?{...t,done:!t.done}:t)}));}
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.surf,border:`1px solid ${T.border}`,borderRadius:18,padding:28,width:"100%",maxWidth:540,maxHeight:"88vh",overflowY:"auto",position:"relative"}}>
+        <button onClick={onClose} style={{position:"absolute",top:14,right:14,background:"none",border:"none",fontSize:22,cursor:"pointer",color:T.mute,lineHeight:1}}>✕</button>
+        <div style={{marginBottom:8}}><Tag track={track} T={T} allTracks={allTracks}/></div>
+        <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>{task.name}</div>
+        <div style={{fontSize:12,color:T.sub,marginBottom:12}}>{isSchool||isBiom?(task.due?`Due ${task.due}`:""):(`~${task.mins} min`)}</div>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <PBar pct={p} color={color} h={8} style={{flex:1}}/>
+          <span style={{fontSize:15,fontWeight:700,color:T.text}}>{p}%</span>
+        </div>
+        <div style={{fontSize:12,color:T.mute,marginBottom:18}}>{doneSubs}/{task.subs.length} subtasks complete</div>
+        <SH T={T}>Subtasks <span style={{fontWeight:400,textTransform:"none",fontSize:10}}>(tap pencil to rename · tap ✕ to delete)</span></SH>
+        {task.subs.map((sub,si)=>(
+          <div key={si} style={{padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
+            {editingSubIdx===si?(
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <Inp value={editingSubText} onChange={e=>setEditingSubText(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Enter")renameSub(si);if(e.key==="Escape")setEditingSubIdx(null);}} style={{flex:1}}/>
+                <BtnP onClick={()=>renameSub(si)} style={{padding:"5px 12px",fontSize:12}}>Save</BtnP>
+                <BtnN onClick={()=>setEditingSubIdx(null)} style={{padding:"5px 10px",fontSize:12}}>✕</BtnN>
+              </div>
+            ):(
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <Chk done={sub.done} onClick={()=>toggleSub(si)} T={T}/>
+                <span style={{flex:1,fontSize:14,color:sub.done?T.mute:T.text,textDecoration:sub.done?"line-through":"none"}}>{sub.t}</span>
+                <PBar pct={sub.done?100:0} color={color} h={3} style={{width:50}}/>
+                <button onClick={()=>{setEditingSubIdx(si);setEditingSubText(sub.t);}} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:14,padding:"0 4px"}}>✏️</button>
+                <button onClick={()=>deleteSub(si)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:14,padding:"0 4px"}}>✕</button>
+              </div>
+            )}
+          </div>
+        ))}
+        <div style={{marginTop:12,display:"flex",gap:8,alignItems:"center"}}>
+          <Inp value={newSubText} onChange={e=>setNewSubText(e.target.value)} placeholder="Add a subtask…" onKeyDown={e=>e.key==="Enter"&&addSub()} style={{flex:1}}/>
+          <BtnP onClick={addSub} style={{padding:"6px 14px",fontSize:12}}>+ Add</BtnP>
+        </div>
+        {!isSchool&&!isBiom&&(
+          <div style={{marginTop:16,display:"flex",alignItems:"center",gap:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+            <Chk done={task.done} onClick={toggleDone} T={T}/>
+            <span style={{fontSize:13,color:T.sub}}>Mark entire task complete</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Track Page ───────────────────────────────────────────────────────────────
+function TrackPage({track,S,upd,setModal,allTracks}){
+  const T=window.__T;
+  const tr=allTracks[track];
+  const tasks=S.tasks.filter(t=>t.track===track);
+  const totalSubs=tasks.reduce((a,t)=>a+t.subs.length,0);
+  const doneSubs=tasks.reduce((a,t)=>a+t.subs.filter(s=>s.done).length,0);
+  const overallPct=totalSubs?Math.round(doneSubs/totalSubs*100):0;
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:28}}>{tr?.icon}</span>
+        <div>
+          <div style={{fontSize:18,fontWeight:700,color:T.text}}>{tr?.name}</div>
+          <div style={{fontSize:12,color:T.sub}}>{tasks.length} tasks · {doneSubs}/{totalSubs} subtasks done</div>
+        </div>
+      </div>
+      <Card>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text}}>Overall progress</div>
+          <span style={{marginLeft:"auto",fontSize:14,fontWeight:700,color:tr?.color}}>{overallPct}%</span>
+        </div>
+        <PBar pct={overallPct} color={tr?.color||T.acc} h={10}/>
+      </Card>
+      {tasks.length===0&&(
+        <div style={{background:S.dark?"#2A1F0A":"#FFF8E8",border:"1px solid #D4841A",borderRadius:12,padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+          <span style={{fontSize:22}}>⚠️</span>
+          <div>
+            <div style={{fontSize:14,fontWeight:700,color:"#D4841A"}}>No tasks yet for {tr?.name}</div>
+            <div style={{fontSize:12,color:T.sub,marginTop:2}}>Head to <strong>➕ New task</strong> in the sidebar to add tasks to this track!</div>
+          </div>
+        </div>
+      )}
+      <SH T={T}>All tasks</SH>
+      {tasks.map(task=>{
+        const dSub=task.subs.filter(s=>s.done).length;
+        const pct=task.subs.length?Math.round(dSub/task.subs.length*100):(task.done?100:0);
+        return(
+          <Card key={task.id} onClick={()=>setModal(task.id)} style={{cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:6}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.text,flex:1,paddingRight:8}}>{task.name}</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                <span style={{fontSize:12,color:T.mute}}>~{task.mins}m</span>
+                {task.done&&<span style={{fontSize:11,background:T.success+"22",color:T.success,padding:"1px 8px",borderRadius:20,fontWeight:700}}>Done</span>}
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              <PBar pct={pct} color={tr?.color||T.acc} h={6} style={{flex:1}}/>
+              <span style={{fontSize:12,fontWeight:700,color:tr?.color,minWidth:32}}>{pct}%</span>
+            </div>
+            {task.subs.map((sub,si)=>(
+              <div key={si} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+                <Chk done={sub.done} onClick={()=>{upd(s=>{const arr=[...s.tasks];const idx=arr.findIndex(x=>x.id===task.id);arr[idx]={...arr[idx],subs:arr[idx].subs.map((ss,i)=>i===si?{...ss,done:!ss.done}:ss)};return{...s,tasks:arr};});}} T={T}/>
+                <span style={{fontSize:12,color:sub.done?T.mute:T.sub,flex:1,textDecoration:sub.done?"line-through":"none"}}>{sub.t}</span>
+              </div>
+            ))}
+            <div style={{fontSize:11,color:T.acc,marginTop:6}}>tap to expand & edit subtasks →</div>
+          </Card>
+        );
+      })}
+      {track==="sat"&&<SATInline S={S} upd={upd} T={T}/>}
+      {track==="res"&&<ResearchInline S={S} T={T}/>}
+      {track==="vln"&&<ViolinInline S={S} upd={upd} T={T}/>}
+    </div>
+  );
+}
+
+// ─── SAT inline ───────────────────────────────────────────────────────────────
+function SATInline({S,upd,T}){
+  const [f,setF]=useState({section:"Reading & Writing",mins:"",score:"",target:"",feel:"okay",notes:""});
+  const latest=S.satLog[0]||null;
+  function log(){if(!f.mins)return;upd(s=>({...s,satLog:[{id:s.nextId,date:today(),...f,mins:parseInt(f.mins)},...s.satLog],nextId:s.nextId+1}));setF(x=>({...x,mins:"",score:"",notes:"",target:""}));}
+  return(<>
+    <SH T={T} style={{marginTop:8}}>SAT practice log</SH>
+    {latest?.score&&<Card style={{background:T.accBg,border:`1px solid ${T.acc}`}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.acc,textTransform:"uppercase",letterSpacing:".07em",marginBottom:6}}>Most recent score</div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:16,flexWrap:"wrap"}}>
+        <div style={{fontSize:34,fontWeight:700,color:T.text}}>{latest.score}</div>
+        <div><div style={{fontSize:13,color:T.sub}}>{latest.section}</div><div style={{fontSize:12,color:T.mute}}>{latest.date}</div>{latest.target&&<div style={{fontSize:12,color:T.acc}}>Target: {latest.target}</div>}</div>
+      </div>
+    </Card>}
+    <Card>
+      <SH T={T}>Log session</SH>
+      <G2 style={{marginBottom:8}}><div><Lbl>Section</Lbl><Sel value={f.section} onChange={e=>setF(x=>({...x,section:e.target.value}))}>{["Reading & Writing","Math","Full practice test","Vocab drill","Grammar review"].map(o=><option key={o}>{o}</option>)}</Sel></div><div><Lbl>Minutes</Lbl><Inp type="number" value={f.mins} onChange={e=>setF(x=>({...x,mins:e.target.value}))} placeholder="30"/></div></G2>
+      <G3 style={{marginBottom:8}}><div><Lbl>Score</Lbl><Inp value={f.score} onChange={e=>setF(x=>({...x,score:e.target.value}))} placeholder="720"/></div><div><Lbl>Target</Lbl><Inp value={f.target} onChange={e=>setF(x=>({...x,target:e.target.value}))} placeholder="750"/></div><div><Lbl>Feel</Lbl><Sel value={f.feel} onChange={e=>setF(x=>({...x,feel:e.target.value}))}>{["great","okay","rough","exhausted"].map(o=><option key={o}>{o}</option>)}</Sel></div></G3>
+      <div style={{marginBottom:8}}><Lbl>Notes</Lbl><Inp value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} placeholder="What to review…"/></div>
+      <BtnP onClick={log}>Log session ✏️</BtnP>
+    </Card>
+    {S.satLog.length>0&&<Card><SH T={T}>Recent sessions</SH>{S.satLog.slice(0,5).map((l,i)=><div key={i} style={{padding:"8px 0",borderBottom:`1px solid ${T.border}`,display:"flex",gap:12}}><div style={{fontSize:18}}>✏️</div><div><div style={{fontSize:13,fontWeight:700,color:T.text}}>{l.section} · {l.mins}m{l.score&&" · "+l.score}</div>{l.target&&<div style={{fontSize:11,color:T.acc}}>Target: {l.target}</div>}{l.notes&&<div style={{fontSize:11,color:T.mute}}>{l.notes}</div>}<div style={{fontSize:10,color:T.mute}}>{l.date}</div></div></div>)}</Card>}
+  </>);
+}
+
+// ─── Research inline ──────────────────────────────────────────────────────────
+function ResearchInline({S,T}){
+  const rj=S.rj;
+  return(<>
+    <SH T={T} style={{marginTop:8}}>Research journal summary</SH>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8}}>
+      {[{label:"Ideas",count:rj.ideas.length,color:"#2EAF7D"},{label:"Questions",count:rj.questions.length,color:"#7B6FE0"},{label:"Sources",count:rj.sources.length,color:"#4AA8D4"},{label:"Notes",count:rj.notes.length,color:"#D4608A"},{label:"Open to-do",count:rj.todo.filter(t=>!t.done).length,color:"#D4841A"},{label:"Milestones",count:rj.timeline.length,color:"#C45A3A"}].map(m=><Card key={m.label} style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:700,color:m.color}}>{m.count}</div><div style={{fontSize:12,color:T.sub}}>{m.label}</div></Card>)}
+    </div>
+    {rj.ideas.length>0&&<Card><SH T={T}>Latest ideas</SH>{rj.ideas.slice(0,3).map((e,i)=><div key={i} style={{fontSize:13,color:T.text,padding:"5px 0",borderBottom:`1px solid ${T.border}`}}>💡 {e.t}</div>)}</Card>}
+  </>);
+}
+
+// ─── Violin inline ────────────────────────────────────────────────────────────
+function ViolinInline({S,upd,T}){
+  const [f,setF]=useState({mins:"",piece:"",focus:"",feel:"good"});
+  function log(){if(!f.mins)return;upd(s=>({...s,vlnLog:[{id:s.nextId,date:today(),...f,mins:parseInt(f.mins)},...s.vlnLog],nextId:s.nextId+1}));setF(x=>({...x,mins:"",piece:"",focus:""}));}
+  const totalWeek=S.vlnLog.filter(l=>(new Date()-new Date(l.date))/86400000<7).reduce((a,l)=>a+l.mins,0);
+  const goal=(S.vlnGoalMins||30)*7;
+  return(<>
+    <SH T={T} style={{marginTop:8}}>Violin practice log</SH>
+    <Card style={{background:T.accBg,border:`1px solid ${T.acc}`}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.acc,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5}}>Weekly total</div>
+      <div style={{fontSize:28,fontWeight:700,color:T.text}}>{totalWeek} min</div>
+      <div style={{fontSize:12,color:T.sub}}>of {goal} min goal · {Math.min(100,Math.round(totalWeek/goal*100))}%</div>
+      <PBar pct={Math.min(100,totalWeek/goal*100)} color={BUILTIN_TRACKS.vln.color} h={6} style={{marginTop:7}}/>
+    </Card>
+    <Card><SH T={T}>Log session</SH>
+      <G2 style={{marginBottom:8}}><div><Lbl>Minutes</Lbl><Inp type="number" value={f.mins} onChange={e=>setF(x=>({...x,mins:e.target.value}))} placeholder="30"/></div><div><Lbl>Feel</Lbl><Sel value={f.feel} onChange={e=>setF(x=>({...x,feel:e.target.value}))}>{["great","good","okay","rough"].map(o=><option key={o}>{o}</option>)}</Sel></div></G2>
+      <G2 style={{marginBottom:8}}><div><Lbl>Piece</Lbl><Inp value={f.piece} onChange={e=>setF(x=>({...x,piece:e.target.value}))} placeholder="e.g. Meditation — Massenet"/></div><div><Lbl>Focus</Lbl><Inp value={f.focus} onChange={e=>setF(x=>({...x,focus:e.target.value}))} placeholder="e.g. intonation"/></div></G2>
+      <BtnP onClick={log}>Log session 🎻</BtnP>
+    </Card>
+  </>);
+}
+
+// ─── Volunteering Page ────────────────────────────────────────────────────────
+function VolunteeringPage({S,upd}){
+  const T=window.__T;
+  const [f,setF]=useState({org:"",hours:"",date:today(),desc:""});
+  function log(){if(!f.org.trim()||!f.hours)return;upd(s=>({...s,volLog:[{id:s.nextId,date:f.date,org:f.org,hours:parseFloat(f.hours)||0,desc:f.desc},...(s.volLog||[])],nextId:s.nextId+1}));setF({org:"",hours:"",date:today(),desc:""});}
+  function del(id){upd(s=>({...s,volLog:(s.volLog||[]).filter(x=>x.id!==id)}));}
+  const logs=S.volLog||[];
+  const totalHours=logs.reduce((a,l)=>a+l.hours,0);
+  const goal=S.volHoursGoal||10;
+  const recentOrgs=[...new Set(logs.map(l=>l.org))].slice(0,5);
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:28}}>🤝</span>
+        <div><div style={{fontSize:18,fontWeight:700,color:T.text}}>Volunteering</div>
+          <div style={{fontSize:12,color:T.sub}}>{logs.length} sessions logged</div></div>
+      </div>
+      <Card style={{background:T.accBg,border:`1px solid ${T.acc}`}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.acc,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5}}>Total hours</div>
+        <div style={{fontSize:34,fontWeight:700,color:T.text}}>{totalHours.toFixed(1)} hrs</div>
+        <div style={{fontSize:12,color:T.sub,marginBottom:8}}>of {goal}-hr goal · {Math.min(100,Math.round(totalHours/goal*100))}%</div>
+        <PBar pct={Math.min(100,totalHours/goal*100)} color={BUILTIN_TRACKS.vol.color} h={8}/>
+      </Card>
+      <Card>
+        <SH T={T}>Log volunteer time</SH>
+        <Row>
+          <G2>
+            <div><Lbl>Organization / Activity</Lbl><Inp value={f.org} onChange={e=>setF(x=>({...x,org:e.target.value}))} placeholder="e.g. Food bank, tutoring…"/></div>
+            <div><Lbl>Hours</Lbl><Inp type="number" value={f.hours} onChange={e=>setF(x=>({...x,hours:e.target.value}))} placeholder="2.5"/></div>
+          </G2>
+          <div><Lbl>Date</Lbl><Inp type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))}/></div>
+          <div><Lbl>Notes (what you did)</Lbl><Inp value={f.desc} onChange={e=>setF(x=>({...x,desc:e.target.value}))} placeholder="e.g. Sorted donations, helped with meal prep…"/></div>
+          <BtnP onClick={log}>Log time 🤝</BtnP>
+        </Row>
+      </Card>
+      {recentOrgs.length>0&&(
+        <Card>
+          <SH T={T}>Organizations</SH>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {recentOrgs.map(org=>{
+              const orgTotal=logs.filter(l=>l.org===org).reduce((a,l)=>a+l.hours,0);
+              return<span key={org} style={{fontSize:12,background:BUILTIN_TRACKS.vol.light,color:BUILTIN_TRACKS.vol.color,padding:"4px 12px",borderRadius:20,fontWeight:600}}>🤝 {org} · {orgTotal.toFixed(1)}h</span>;
+            })}
+          </div>
+        </Card>
+      )}
+      <SH T={T}>Session log</SH>
+      {logs.map(l=>(
+        <Card key={l.id} style={{display:"flex",alignItems:"flex-start",gap:10}}>
+          <div style={{fontSize:24,marginTop:2}}>🤝</div>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.text}}>{l.org}</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:13,fontWeight:700,color:BUILTIN_TRACKS.vol.color}}>{l.hours}h</span>
+                <button onClick={()=>del(l.id)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button>
+              </div>
+            </div>
+            {l.desc&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{l.desc}</div>}
+            <div style={{fontSize:11,color:T.mute,marginTop:3}}>{l.date}</div>
+          </div>
+        </Card>
+      ))}
+      {logs.length===0&&<div style={{fontSize:13,color:T.mute}}>No volunteer sessions logged yet. Add your first above!</div>}
+    </div>
+  );
+}
+
+// ─── Biomed Page ──────────────────────────────────────────────────────────────
+function BiomPage({S,upd,setModal}){
+  const T=window.__T;
+  const [tab,setTab]=useState("lectures");
+  const [lf,setLf]=useState({title:"",date:today(),notes:""});
+  const [af,setAf]=useState({name:"",due:"",mins:"45",subs:""});
+  const lectures=S.biomLectures||[];
+  const assignments=S.biomAssignments||[];
+  const watchedCount=lectures.filter(l=>l.watched).length;
+
+  function addLecture(){if(!lf.title.trim())return;upd(s=>({...s,biomLectures:[...( s.biomLectures||[]),{id:s.nextId,title:lf.title,date:lf.date,notes:lf.notes,watched:false}],nextId:s.nextId+1}));setLf({title:"",date:today(),notes:""});}
+  function toggleWatched(id){upd(s=>({...s,biomLectures:(s.biomLectures||[]).map(l=>l.id===id?{...l,watched:!l.watched}:l)}));}
+  function delLecture(id){upd(s=>({...s,biomLectures:(s.biomLectures||[]).filter(l=>l.id!==id)}));}
+  function addAssignment(){if(!af.name.trim())return;const subs=af.subs.split("\n").map(l=>l.trim()).filter(Boolean).map(t=>({t,done:false}));upd(s=>({...s,biomAssignments:[...(s.biomAssignments||[]),{id:s.nextId,name:af.name,due:af.due,mins:parseInt(af.mins)||45,subs,done:false}],nextId:s.nextId+1}));setAf({name:"",due:"",mins:"45",subs:""});}
+  function delAssignment(id){upd(s=>({...s,biomAssignments:(s.biomAssignments||[]).filter(a=>a.id!==id)}));}
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:28}}>🧬</span>
+        <div><div style={{fontSize:18,fontWeight:700,color:T.text}}>Biomed Class</div>
+          <div style={{fontSize:12,color:T.sub}}>{watchedCount}/{lectures.length} lectures watched · {assignments.length} assignments</div></div>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        {["lectures","assignments"].map(t=>(
+          <div key={t} onClick={()=>setTab(t)} style={{fontSize:12,padding:"6px 16px",borderRadius:20,cursor:"pointer",border:`1px solid ${tab===t?T.acc:T.border}`,background:tab===t?T.accBg:T.surf,color:tab===t?T.acc:T.sub,fontWeight:tab===t?700:400,textTransform:"capitalize",transition:"all .15s"}}>{t==="lectures"?"📹 Lectures":"📝 Assignments"}</div>
+        ))}
+      </div>
+
+      {tab==="lectures"&&(<>
+        {lectures.length>0&&(
+          <Card style={{background:T.accBg,border:`1px solid ${T.acc}`}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.acc,textTransform:"uppercase",letterSpacing:".07em",marginBottom:6}}>Progress</div>
+            <div style={{fontSize:24,fontWeight:700,color:T.text}}>{watchedCount} / {lectures.length} watched</div>
+            <PBar pct={lectures.length?Math.round(watchedCount/lectures.length*100):0} color={BUILTIN_TRACKS.bio.color} h={8} style={{marginTop:8}}/>
+          </Card>
+        )}
+        <Card>
+          <SH T={T}>Add lecture</SH>
+          <Row>
+            <G2>
+              <div><Lbl>Lecture title</Lbl><Inp value={lf.title} onChange={e=>setLf(x=>({...x,title:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addLecture()} placeholder="e.g. Cell signaling pathways"/></div>
+              <div><Lbl>Date</Lbl><Inp type="date" value={lf.date} onChange={e=>setLf(x=>({...x,date:e.target.value}))}/></div>
+            </G2>
+            <div><Lbl>Notes / topics covered</Lbl><Inp value={lf.notes} onChange={e=>setLf(x=>({...x,notes:e.target.value}))} placeholder="Key concepts, anything to review…"/></div>
+            <BtnP onClick={addLecture}>Add lecture 📹</BtnP>
+          </Row>
+        </Card>
+        <SH T={T}>All lectures</SH>
+        {lectures.map(l=>(
+          <Card key={l.id} style={{display:"flex",alignItems:"flex-start",gap:10,opacity:l.watched?.7:1}}>
+            <div onClick={()=>toggleWatched(l.id)} style={{width:22,height:22,borderRadius:6,border:l.watched?"none":`2px solid ${T.border}`,background:l.watched?BUILTIN_TRACKS.bio.color:"transparent",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",marginTop:2}}>
+              {l.watched&&<svg width="12" height="10"><polyline points="1,5 5,9 11,1" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            </div>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div style={{fontSize:14,fontWeight:700,color:T.text,textDecoration:l.watched?"line-through":"none"}}>{l.title}</div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{fontSize:11,background:T.surf2,color:T.sub,padding:"2px 9px",borderRadius:20}}>📅 {l.date}</span>
+                  <button onClick={()=>delLecture(l.id)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button>
+                </div>
+              </div>
+              {l.notes&&<div style={{fontSize:12,color:T.sub,marginTop:3}}>{l.notes}</div>}
+              {l.watched&&<span style={{fontSize:11,color:BUILTIN_TRACKS.bio.color,fontWeight:700}}>✓ Watched</span>}
+            </div>
+          </Card>
+        ))}
+        {lectures.length===0&&<div style={{fontSize:13,color:T.mute}}>No lectures added yet. Add your first above!</div>}
+      </>)}
+
+      {tab==="assignments"&&(<>
+        <Card>
+          <SH T={T}>Add assignment</SH>
+          <Row>
+            <G2>
+              <div><Lbl>Assignment name</Lbl><Inp value={af.name} onChange={e=>setAf(x=>({...x,name:e.target.value}))} placeholder="e.g. Lab report — DNA extraction"/></div>
+              <div><Lbl>Due date</Lbl><Inp type="date" value={af.due} onChange={e=>setAf(x=>({...x,due:e.target.value}))}/></div>
+            </G2>
+            <div><Lbl>Est. minutes</Lbl><Inp type="number" value={af.mins} onChange={e=>setAf(x=>({...x,mins:e.target.value}))} placeholder="45"/></div>
+            <div><Lbl>Subtasks (one per line)</Lbl><textarea value={af.subs} onChange={e=>setAf(x=>({...x,subs:e.target.value}))} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:T.inp,color:T.text,width:"100%",height:72,resize:"vertical",fontFamily:"inherit"}} placeholder={"Research\nOutline\nDraft\nProofread"}/></div>
+            <BtnP onClick={addAssignment}>Add assignment 📝</BtnP>
+          </Row>
+        </Card>
+        <SH T={T}>Assignments</SH>
+        {assignments.map(a=>{
+          const done=a.subs.filter(s=>s.done).length;
+          const pct=a.subs.length?Math.round(done/a.subs.length*100):(a.done?100:0);
+          return(
+            <Card key={a.id} onClick={()=>setModal(a.id)} style={{cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:700,color:T.text}}>{a.name}</div>
+                  {a.due&&<div style={{fontSize:11,color:T.mute,marginTop:2}}>Due {a.due}</div>}
+                </div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{fontSize:12,color:T.mute}}>~{a.mins}m</span>
+                  <button onClick={e=>{e.stopPropagation();delAssignment(a.id);}} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button>
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <PBar pct={pct} color={BUILTIN_TRACKS.bio.color} h={6} style={{flex:1}}/>
+                <span style={{fontSize:12,fontWeight:700,color:BUILTIN_TRACKS.bio.color}}>{pct}%</span>
+              </div>
+              {a.subs.length>0&&<div style={{fontSize:11,color:T.sub}}>{done}/{a.subs.length} steps · tap to expand →</div>}
+            </Card>
+          );
+        })}
+        {assignments.length===0&&<div style={{fontSize:13,color:T.mute}}>No assignments yet. Add your first above!</div>}
+      </>)}
+    </div>
+  );
+}
+
+// ─── Manage Tracks ────────────────────────────────────────────────────────────
+const TRACK_COLORS=["#7B6FE0","#2EAF7D","#D4608A","#D4841A","#4AA8D4","#6D5FD4","#C45A3A","#E06B2E","#1B8A6B","#B85490","#3A8FB5","#8B6914","#5B8A28","#A04080"];
+const TRACK_ICONS=["🎯","📖","🎨","🏋️","🎵","🏆","💡","🌍","🧪","⚡","🎭","📊","🔧","✨","🎓","🌐","🏠","🎪","📱","🦋"];
+
+function ManageTracksPage({S,upd,allTracks}){
+  const T=window.__T;
+  const [f,setF]=useState({name:"",icon:"🎯",color:"#7B6FE0"});
+  const [showForm,setShowForm]=useState(false);
+
+  function addTrack(){
+    if(!f.name.trim())return;
+    const key="custom_"+Date.now();
+    const light=f.color+"33";
+    upd(s=>({...s,customTracks:{...s.customTracks,[key]:{name:f.name.trim(),color:f.color,light,icon:f.icon}}}));
+    setF({name:"",icon:"🎯",color:"#7B6FE0"});setShowForm(false);
+  }
+  function delTrack(key){
+    upd(s=>{const ct={...s.customTracks};delete ct[key];
+      const tasks=s.tasks.filter(t=>t.track!==key);
+      return{...s,customTracks:ct,tasks};
+    });
+  }
+
+  const customKeys=Object.keys(S.customTracks||{});
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:16,fontWeight:700,color:T.text}}>🗂️ Manage tracks</div>
+        <BtnP onClick={()=>setShowForm(!showForm)}>+ New track</BtnP>
+      </div>
+      {showForm&&(
+        <Card style={{border:`2px solid ${T.acc}`}}>
+          <SH T={T}>Create custom track</SH>
+          <Row>
+            <div><Lbl>Track name</Lbl><Inp value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} placeholder="e.g. Piano, Swimming, Photography…"/></div>
+            <div>
+              <Lbl>Icon</Lbl>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:4}}>
+                {TRACK_ICONS.map(ic=>(
+                  <div key={ic} onClick={()=>setF(x=>({...x,icon:ic}))} style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,cursor:"pointer",border:`2px solid ${f.icon===ic?T.acc:T.border}`,background:f.icon===ic?T.accBg:T.surf2}}>{ic}</div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <Lbl>Color</Lbl>
+              <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:4}}>
+                {TRACK_COLORS.map(c=>(
+                  <div key={c} onClick={()=>setF(x=>({...x,color:c}))} style={{width:28,height:28,borderRadius:"50%",background:c,cursor:"pointer",border:f.color===c?"3px solid "+T.text:"3px solid transparent",transform:f.color===c?"scale(1.15)":"scale(1)",transition:"transform .1s"}}/>
+                ))}
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:f.color+"18",borderRadius:10,border:`1px solid ${f.color}`}}>
+              <span style={{fontSize:22}}>{f.icon}</span>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:T.text}}>{f.name||"Track name"}</div>
+                <div style={{fontSize:11,color:T.sub}}>Preview</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <BtnP onClick={addTrack}>Create track</BtnP>
+              <BtnN onClick={()=>setShowForm(false)}>Cancel</BtnN>
+            </div>
+          </Row>
+        </Card>
+      )}
+      <SH T={T}>Built-in tracks</SH>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:8}}>
+        {Object.entries(BUILTIN_TRACKS).filter(([k])=>!["sch","soc"].includes(k)).map(([k,tr])=>(
+          <div key={k} style={{padding:"10px 12px",borderRadius:10,background:tr.light,border:`1px solid ${tr.color}44`,display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:18}}>{tr.icon}</span>
+            <span style={{fontSize:13,fontWeight:600,color:tr.color}}>{tr.name}</span>
+          </div>
+        ))}
+      </div>
+      {customKeys.length>0&&(<>
+        <SH T={T}>Your custom tracks</SH>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {customKeys.map(k=>{
+            const tr=S.customTracks[k];
+            const taskCount=S.tasks.filter(t=>t.track===k).length;
+            return(
+              <Card key={k} style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:40,height:40,borderRadius:10,background:tr.light||tr.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tr.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:700,color:T.text}}>{tr.name}</div>
+                  <div style={{fontSize:11,color:T.sub}}>{taskCount} tasks</div>
+                </div>
+                <div style={{width:14,height:14,borderRadius:"50%",background:tr.color,flexShrink:0}}/>
+                <BtnDanger onClick={()=>delTrack(k)} style={{fontSize:11,padding:"3px 9px"}}>Remove</BtnDanger>
+              </Card>
+            );
+          })}
+        </div>
+      </>)}
+      {customKeys.length===0&&!showForm&&<div style={{fontSize:13,color:T.mute,textAlign:"center",padding:"20px 0"}}>No custom tracks yet. Add one above!</div>}
+    </div>
+  );
+}
+
+// ─── College Page (simplified) ────────────────────────────────────────────────
+function CollegePage({S,upd}){
+  const T=window.__T;
+  const blankC=()=>({name:"",location:"",setting:"urban",rdRate:"",eaRate:"",eaType:[],major:"",tuition:"",notes:""});
+  const [f,setF]=useState(blankC());
+  const [showForm,setShowForm]=useState(false);
+  const [viewing,setViewing]=useState(null);
+
+  function add(){if(!f.name.trim())return;upd(s=>({...s,colleges:[...s.colleges,{...f,id:s.nextId}],nextId:s.nextId+1}));setF(blankC());setShowForm(false);}
+  function del(id){upd(s=>({...s,colleges:s.colleges.filter(c=>c.id!==id)}));if(viewing===id)setViewing(null);}
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:16,fontWeight:700,color:T.text}}>🎓 Colleges</div>
+        <BtnP onClick={()=>setShowForm(!showForm)}>+ Add college</BtnP>
+      </div>
+      {showForm&&(
+        <Card>
+          <SH T={T}>Add college</SH>
+          <Row>
+            <G2><div><Lbl>College name</Lbl><Inp value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} placeholder="MIT"/></div><div><Lbl>Location</Lbl><Inp value={f.location} onChange={e=>setF(x=>({...x,location:e.target.value}))} placeholder="Cambridge, MA"/></div></G2>
+            <G3><div><Lbl>RD rate %</Lbl><Inp value={f.rdRate} onChange={e=>setF(x=>({...x,rdRate:e.target.value}))} placeholder="4"/></div><div><Lbl>EA rate %</Lbl><Inp value={f.eaRate} onChange={e=>setF(x=>({...x,eaRate:e.target.value}))} placeholder="7"/></div><div><Lbl>Major</Lbl><Inp value={f.major} onChange={e=>setF(x=>({...x,major:e.target.value}))} placeholder="Biomedical Eng"/></div></G3>
+            <div><Lbl>Notes</Lbl><textarea value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:T.inp,color:T.text,width:"100%",height:64,resize:"vertical",fontFamily:"inherit"}} placeholder="Anything to remember…"/></div>
+            <div style={{display:"flex",gap:8}}><BtnP onClick={add}>Add college 🎓</BtnP><BtnN onClick={()=>setShowForm(false)}>Cancel</BtnN></div>
+          </Row>
+        </Card>
+      )}
+      {S.colleges.map(c=>(
+        <Card key={c.id} onClick={()=>setViewing(viewing===c.id?null:c.id)} style={{cursor:"pointer"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:T.text}}>{c.name}</div>
+              <div style={{fontSize:12,color:T.sub}}>{c.location}{c.major&&" · "+c.major}</div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {c.rdRate&&<span style={{fontSize:11,background:T.surf2,color:T.sub,padding:"2px 9px",borderRadius:20}}>RD {c.rdRate}%</span>}
+              <button onClick={e=>{e.stopPropagation();del(c.id);}} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button>
+            </div>
+          </div>
+          {viewing===c.id&&c.notes&&<div style={{marginTop:8,fontSize:12,color:T.sub,background:T.surf2,borderRadius:8,padding:"8px 10px",whiteSpace:"pre-wrap"}}>{c.notes}</div>}
+        </Card>
+      ))}
+      {S.colleges.length===0&&<div style={{fontSize:13,color:T.mute}}>No colleges tracked yet!</div>}
+    </div>
+  );
+}
+
+// ─── Scholarships Page ────────────────────────────────────────────────────────
+function ScholarshipsPage({S,upd}){
+  const T=window.__T;
+  const [f,setF]=useState({name:"",amount:"",deadline:"",notes:""});
+  function add(){if(!f.name.trim())return;upd(s=>({...s,scholarships:[...s.scholarships,{...f,id:s.nextId}],nextId:s.nextId+1}));setF({name:"",amount:"",deadline:"",notes:""});}
+  function del(id){upd(s=>({...s,scholarships:s.scholarships.filter(x=>x.id!==id)}));}
+  const sorted=[...S.scholarships].sort((a,b)=>a.deadline>b.deadline?1:-1);
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{fontSize:16,fontWeight:700,color:T.text}}>💰 Scholarships</div>
+      <Card>
+        <SH T={T}>Add scholarship</SH>
+        <Row>
+          <G2><div><Lbl>Name</Lbl><Inp value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} placeholder="Gates Scholarship"/></div><div><Lbl>Amount</Lbl><Inp value={f.amount} onChange={e=>setF(x=>({...x,amount:e.target.value}))} placeholder="$10,000"/></div></G2>
+          <div><Lbl>Deadline</Lbl><Inp type="date" value={f.deadline} onChange={e=>setF(x=>({...x,deadline:e.target.value}))}/></div>
+          <div><Lbl>Notes</Lbl><textarea value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:T.inp,color:T.text,width:"100%",height:56,resize:"vertical",fontFamily:"inherit"}} placeholder="Requirements, essays…"/></div>
+          <BtnP onClick={add}>Add scholarship 💰</BtnP>
+        </Row>
+      </Card>
+      {sorted.map(s=>(
+        <Card key={s.id}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div><div style={{fontSize:14,fontWeight:700,color:T.text}}>{s.name}</div>{s.amount&&<div style={{fontSize:14,fontWeight:700,color:T.success}}>{s.amount}</div>}</div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              {s.deadline&&<span style={{fontSize:11,background:T.surf2,color:T.sub,padding:"2px 9px",borderRadius:20}}>⏰ {s.deadline}</span>}
+              <button onClick={()=>del(s.id)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button>
+            </div>
+          </div>
+          {s.notes&&<div style={{marginTop:6,fontSize:12,color:T.sub}}>{s.notes}</div>}
+        </Card>
+      ))}
+      {S.scholarships.length===0&&<div style={{fontSize:13,color:T.mute}}>No scholarships added yet!</div>}
+    </div>
+  );
+}
+
+// ─── Research Journal ─────────────────────────────────────────────────────────
+function RJPage({S,upd}){
+  const T=window.__T;
+  const [tab,setTab]=useState("ideas");
+  const [f,setF]=useState({idea:"",q:"",srcTitle:"",srcUrl:"",srcNote:"",note:"",tlName:"",tlDate:"",rtd:""});
+  const tabs=["ideas","questions","sources","notes","timeline","todo"];
+  function addE(type){const km={idea:"ideas",q:"questions",note:"notes",rtd:"todo"};const fm={idea:"idea",q:"q",note:"note",rtd:"rtd"};if(km[type]){const val=f[fm[type]];if(!val.trim())return;const entry=type==="rtd"?{t:val,done:false,date:today()}:{t:val,date:today()};upd(s=>({...s,rj:{...s.rj,[km[type]]:[...s.rj[km[type]],entry]}}));setF(x=>({...x,[fm[type]]:""}));}else if(type==="src"){if(!f.srcTitle.trim())return;upd(s=>({...s,rj:{...s.rj,sources:[...s.rj.sources,{title:f.srcTitle,url:f.srcUrl,note:f.srcNote,date:today()}]}}));setF(x=>({...x,srcTitle:"",srcUrl:"",srcNote:""}));}else if(type==="tl"){if(!f.tlName.trim())return;upd(s=>{const tl=[...s.rj.timeline,{name:f.tlName,date:f.tlDate}].sort((a,b)=>a.date>b.date?1:-1);return{...s,rj:{...s.rj,timeline:tl}};});setF(x=>({...x,tlName:"",tlDate:""}));}}
+  function del(key,i){upd(s=>({...s,rj:{...s.rj,[key]:s.rj[key].filter((_,j)=>j!==i)}}));}
+  function toggleTodo(i){upd(s=>{const todo=[...s.rj.todo];todo[i]={...todo[i],done:!todo[i].done};return{...s,rj:{...s.rj,todo}};});}
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{fontSize:16,fontWeight:700,color:T.text}}>📓 Research journal</div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{tabs.map(t=><div key={t} onClick={()=>setTab(t)} style={{fontSize:12,padding:"5px 12px",borderRadius:20,cursor:"pointer",border:`1px solid ${tab===t?T.acc:T.border}`,background:tab===t?T.accBg:T.surf,color:tab===t?T.acc:T.sub,fontWeight:tab===t?700:400,transition:"all .15s",textTransform:"capitalize"}}>{t==="todo"?"To-do":t}</div>)}</div>
+      {tab==="ideas"&&<><G2 style={{alignItems:"flex-end"}}><div><Lbl>New idea</Lbl><Inp value={f.idea} onChange={e=>setF(x=>({...x,idea:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addE("idea")} placeholder="e.g. Urban heat island study"/></div><BtnP onClick={()=>addE("idea")}>Add</BtnP></G2>{S.rj.ideas.map((e,i)=><Card key={i} style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><div><div style={{fontSize:13,fontWeight:700,color:T.text}}>{e.t}</div><div style={{fontSize:10,color:T.mute}}>{e.date}</div></div><button onClick={()=>del("ideas",i)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button></Card>)}{!S.rj.ideas.length&&<div style={{fontSize:12,color:T.mute}}>No ideas yet.</div>}</>}
+      {tab==="questions"&&<><G2 style={{alignItems:"flex-end"}}><div><Lbl>Research question</Lbl><Inp value={f.q} onChange={e=>setF(x=>({...x,q:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addE("q")} placeholder="e.g. How does X affect Y?"/></div><BtnP onClick={()=>addE("q")}>Add</BtnP></G2>{S.rj.questions.map((e,i)=><Card key={i} style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><div><div style={{fontSize:13,color:T.text}}>{e.t}</div><div style={{fontSize:10,color:T.mute}}>{e.date}</div></div><button onClick={()=>del("questions",i)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button></Card>)}</>}
+      {tab==="sources"&&<><Card><Lbl>Source title</Lbl><Inp value={f.srcTitle} onChange={e=>setF(x=>({...x,srcTitle:e.target.value}))} placeholder="Smith et al. 2023" style={{marginBottom:8}}/><G2 style={{marginBottom:8}}><div><Lbl>URL / DOI</Lbl><Inp value={f.srcUrl} onChange={e=>setF(x=>({...x,srcUrl:e.target.value}))} placeholder="https://..."/></div><div><Lbl>Key takeaway</Lbl><Inp value={f.srcNote} onChange={e=>setF(x=>({...x,srcNote:e.target.value}))} placeholder="Main point"/></div></G2><BtnP onClick={()=>addE("src")}>Add source</BtnP></Card>{S.rj.sources.map((e,i)=><Card key={i} style={{marginBottom:5}}><div style={{display:"flex",justifyContent:"space-between"}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:700,color:T.text}}>{e.title}</div>{e.url&&<div style={{fontSize:11,color:T.acc}}>{e.url}</div>}{e.note&&<div style={{fontSize:12,color:T.sub}}>{e.note}</div>}<div style={{fontSize:10,color:T.mute}}>{e.date}</div></div><button onClick={()=>del("sources",i)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button></div></Card>)}</>}
+      {tab==="notes"&&<><div><Lbl>Note</Lbl><textarea value={f.note} onChange={e=>setF(x=>({...x,note:e.target.value}))} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:T.inp,color:T.text,width:"100%",height:80,resize:"vertical",fontFamily:"inherit"}} placeholder="Anything worth remembering…"/></div><BtnP onClick={()=>addE("note")} style={{alignSelf:"flex-start"}}>Save note</BtnP>{S.rj.notes.map((e,i)=><Card key={i} style={{marginBottom:5}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:13,color:T.text,whiteSpace:"pre-wrap"}}>{e.t}</div><div style={{fontSize:10,color:T.mute}}>{e.date}</div></div><button onClick={()=>del("notes",i)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16,marginLeft:8}}>✕</button></div></Card>)}</>}
+      {tab==="timeline"&&<><G3 style={{alignItems:"flex-end"}}><div><Lbl>Milestone</Lbl><Inp value={f.tlName} onChange={e=>setF(x=>({...x,tlName:e.target.value}))} placeholder="Submit abstract"/></div><div><Lbl>Date</Lbl><input type="date" value={f.tlDate} onChange={e=>setF(x=>({...x,tlDate:e.target.value}))} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:T.inp,color:T.text}}/></div><BtnP onClick={()=>addE("tl")}>Add</BtnP></G3>{S.rj.timeline.map((e,i)=><Card key={i} style={{display:"flex",alignItems:"center",gap:12,marginBottom:5}}><span style={{fontSize:20}}>🚩</span><div style={{flex:1}}><div style={{fontSize:13,fontWeight:700,color:T.text}}>{e.name}</div><div style={{fontSize:11,color:T.mute}}>{e.date}</div></div><button onClick={()=>del("timeline",i)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button></Card>)}</>}
+      {tab==="todo"&&<><G2 style={{alignItems:"flex-end"}}><div><Lbl>Research to-do</Lbl><Inp value={f.rtd} onChange={e=>setF(x=>({...x,rtd:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addE("rtd")} placeholder="Email potential mentor"/></div><BtnP onClick={()=>addE("rtd")}>Add</BtnP></G2>{S.rj.todo.map((e,i)=><Card key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}><Chk done={e.done} onClick={()=>toggleTodo(i)} T={T}/><span style={{flex:1,fontSize:13,color:e.done?T.mute:T.text,textDecoration:e.done?"line-through":"none"}}>{e.t}</span><button onClick={()=>del("todo",i)} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:14}}>✕</button></Card>)}</>}
+    </div>
+  );
+}
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+function SettingsPage({S,upd}){
+  const T=window.__T;
+  const [hours,setHours]=useState({...S.intHours});
+  const [vlnGoal,setVlnGoal]=useState(String(S.vlnGoalMins||30));
+  const [volGoal,setVolGoal]=useState(String(S.volHoursGoal||10));
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{fontSize:16,fontWeight:700,color:T.text}}>⚙️ Settings</div>
+      <Card><SH T={T}>Appearance</SH><div style={{display:"flex",alignItems:"center",gap:14}}><span style={{fontSize:13,color:T.sub}}>🌸 Light</span><div onClick={()=>upd(s=>({...s,dark:!s.dark}))} style={{width:46,height:26,borderRadius:13,background:S.dark?T.acc:T.border,cursor:"pointer",position:"relative",transition:"background .2s"}}><div style={{position:"absolute",top:4,left:S.dark?24:4,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/></div><span style={{fontSize:13,color:T.sub}}>🌙 Dark</span></div></Card>
+      <Card><SH T={T}>Current phase</SH><Sel value={S.phase} onChange={e=>upd(s=>({...s,phase:parseInt(e.target.value)}))}><option value={1}>Phase 1: School still in session</option><option value={2}>Phase 2: Internship + everything</option></Sel></Card>
+      <Card><SH T={T}>Violin daily goal</SH><div style={{display:"flex",gap:8,alignItems:"center"}}><Inp type="number" value={vlnGoal} onChange={e=>setVlnGoal(e.target.value)} style={{width:80}}/><span style={{fontSize:13,color:T.sub}}>min/day</span><BtnP onClick={()=>upd(s=>({...s,vlnGoalMins:parseInt(vlnGoal)||30}))}>Save</BtnP></div></Card>
+      <Card><SH T={T}>Volunteering hours goal</SH><div style={{display:"flex",gap:8,alignItems:"center"}}><Inp type="number" value={volGoal} onChange={e=>setVolGoal(e.target.value)} style={{width:80}}/><span style={{fontSize:13,color:T.sub}}>hrs total</span><BtnP onClick={()=>upd(s=>({...s,volHoursGoal:parseInt(volGoal)||10}))}>Save</BtnP></div></Card>
+      <Card><SH T={T}>Internship hours — by day</SH>
+        {["Mon","Tue","Wed","Thu","Fri"].map(d=><div key={d} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+          <span style={{fontSize:13,fontWeight:700,color:T.text,minWidth:36}}>{d}</span>
+          <input type="time" value={hours[d]?.s||"09:00"} disabled={!!hours[d]?.off} onChange={e=>setHours(h=>({...h,[d]:{...h[d],s:e.target.value}}))} style={{fontSize:13,padding:"5px 8px",border:`1px solid ${T.border}`,borderRadius:7,background:T.inp,color:T.text}}/>
+          <span style={{fontSize:12,color:T.mute}}>to</span>
+          <input type="time" value={hours[d]?.e||"17:00"} disabled={!!hours[d]?.off} onChange={e=>setHours(h=>({...h,[d]:{...h[d],e:e.target.value}}))} style={{fontSize:13,padding:"5px 8px",border:`1px solid ${T.border}`,borderRadius:7,background:T.inp,color:T.text}}/>
+          <label style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:T.sub,cursor:"pointer"}}><input type="checkbox" checked={!!hours[d]?.off} onChange={e=>setHours(h=>({...h,[d]:{...h[d],off:e.target.checked}}))}/> Day off</label>
+        </div>)}
+        <BtnP onClick={()=>upd(s=>({...s,intHours:{...hours}}))} style={{marginTop:12}}>Save hours</BtnP>
+      </Card>
+      <Card><SH T={T}>Data</SH>
+        <BtnDanger onClick={()=>{if(confirm("Reset all data? This cannot be undone.")){localStorage.removeItem(KEY);location.reload();}}}>Reset all data</BtnDanger>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Add task page ────────────────────────────────────────────────────────────
+function AddTaskPage({S,upd,allTracks}){
+  const T=window.__T;
+  const availTracks=Object.entries(allTracks).filter(([k])=>!["sch","soc","vol","bio"].includes(k));
+  const [f,setF]=useState({name:"",track:availTracks[0]?.[0]||"sat",mins:"30",cap:"any",subs:""});
+  function add(){if(!f.name.trim())return;const subs=f.subs.split("\n").map(l=>l.trim()).filter(Boolean).map(t=>({t,done:false}));upd(s=>({...s,tasks:[...s.tasks,{id:s.nextId,name:f.name,track:f.track,mins:parseInt(f.mins)||30,cap:f.cap,subs,done:false}],nextId:s.nextId+1}));setF(x=>({...x,name:"",subs:""}));}
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{fontSize:16,fontWeight:700,color:T.text}}>➕ Add task</div>
+      <Card><Row>
+        <div><Lbl>Task name</Lbl><Inp value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} placeholder="e.g. Practice problem set"/></div>
+        <G2><div><Lbl>Track</Lbl><Sel value={f.track} onChange={e=>setF(x=>({...x,track:e.target.value}))}>{availTracks.map(([k,v])=><option key={k} value={k}>{v.icon} {v.name}</option>)}</Sel></div><div><Lbl>Est. minutes</Lbl><Inp type="number" value={f.mins} onChange={e=>setF(x=>({...x,mins:e.target.value}))} placeholder="30"/></div></G2>
+        <div><Lbl>Subtasks (one per line)</Lbl><textarea value={f.subs} onChange={e=>setF(x=>({...x,subs:e.target.value}))} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:T.inp,color:T.text,width:"100%",height:72,resize:"vertical",fontFamily:"inherit"}} placeholder={"Step 1\nStep 2\nStep 3"}/></div>
+        <div><Lbl>Show when</Lbl><Sel value={f.cap} onChange={e=>setF(x=>({...x,cap:e.target.value}))}><option value="any">Any capacity</option><option value="full">Fully charged only</option><option value="ok">Okay or better</option><option value="low">Even on low</option></Sel></div>
+        <BtnP onClick={add}>Add task</BtnP>
+      </Row></Card>
+      <SH T={T}>All tasks ({S.tasks.length})</SH>
+      {S.tasks.map(t=>(
+        <Card key={t.id} style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:16}}>{allTracks[t.track]?.icon}</span>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{t.name}</div><div style={{fontSize:11,color:T.mute}}>{allTracks[t.track]?.name} · {t.mins}m</div></div>
+          <button onClick={()=>upd(s=>({...s,tasks:s.tasks.filter(x=>x.id!==t.id)}))} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ─── Add School Page ──────────────────────────────────────────────────────────
+function AddSchoolPage({S,upd}){
+  const T=window.__T;
+  const [f,setF]=useState({name:"",cls:"",due:"",mins:"45",subs:""});
+  function add(){if(!f.name.trim())return;const subs=f.subs.split("\n").map(l=>l.trim()).filter(Boolean).map(t=>({t,done:false}));upd(s=>({...s,school:[...s.school,{id:s.nextId,name:f.name,cls:f.cls||"School",due:f.due,mins:parseInt(f.mins)||30,subs}],nextId:s.nextId+1}));setF({name:"",cls:"",due:"",mins:"45",subs:""});}
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{fontSize:16,fontWeight:700,color:T.text}}>📚 School assignments</div>
+      <Card><Row>
+        <G2><div><Lbl>Assignment</Lbl><Inp value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} placeholder="History essay"/></div><div><Lbl>Class</Lbl><Inp value={f.cls} onChange={e=>setF(x=>({...x,cls:e.target.value}))} placeholder="AP Lang"/></div></G2>
+        <G2><div><Lbl>Due date</Lbl><Inp type="date" value={f.due} onChange={e=>setF(x=>({...x,due:e.target.value}))}/></div><div><Lbl>Est. minutes</Lbl><Inp type="number" value={f.mins} onChange={e=>setF(x=>({...x,mins:e.target.value}))}/></div></G2>
+        <div><Lbl>Subtasks</Lbl><textarea value={f.subs} onChange={e=>setF(x=>({...x,subs:e.target.value}))} style={{fontSize:13,padding:"7px 10px",border:`1px solid ${T.border}`,borderRadius:8,background:T.inp,color:T.text,width:"100%",height:60,resize:"vertical",fontFamily:"inherit"}} placeholder={"Outline\nDraft\nProofread"}/></div>
+        <BtnP onClick={add}>Add assignment</BtnP>
+      </Row></Card>
+      {S.school.map(a=><Card key={a.id} style={{display:"flex",alignItems:"center",gap:10,marginTop:5}}><span>📚</span><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{a.name}</div><div style={{fontSize:11,color:T.mute}}>{a.cls}{a.due&&" · due "+a.due}</div></div><button onClick={()=>upd(s=>({...s,school:s.school.filter(x=>x.id!==a.id)}))} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button></Card>)}
+    </div>
+  );
+}
+
+// ─── Add Social Page ──────────────────────────────────────────────────────────
+function AddSocialPage({S,upd}){
+  const T=window.__T;
+  const [f,setF]=useState({name:"",date:"",time:"",who:""});
+  function add(){if(!f.name.trim())return;upd(s=>({...s,social:[...s.social,{id:s.nextId,...f}],nextId:s.nextId+1}));setF({name:"",date:"",time:"",who:""});}
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{fontSize:16,fontWeight:700,color:T.text}}>👥 Social plans</div>
+      <Card><Row>
+        <div><Lbl>Plans</Lbl><Inp value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} placeholder="Dinner with the crew"/></div>
+        <G3><div><Lbl>Date</Lbl><Inp type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))}/></div><div><Lbl>Time</Lbl><Inp type="time" value={f.time} onChange={e=>setF(x=>({...x,time:e.target.value}))}/></div><div><Lbl>With who</Lbl><Inp value={f.who} onChange={e=>setF(x=>({...x,who:e.target.value}))} placeholder="Maya"/></div></G3>
+        <BtnP onClick={add}>Add to calendar 👥</BtnP>
+      </Row></Card>
+      {S.social.map(s=><Card key={s.id} style={{display:"flex",alignItems:"center",gap:10,marginTop:5}}><span>👥</span><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{s.name}</div><div style={{fontSize:11,color:T.mute}}>{s.date}{s.time&&" · "+s.time}{s.who&&" · "+s.who}</div></div><button onClick={()=>upd(s2=>({...s2,social:s2.social.filter(x=>x.id!==s.id)}))} style={{background:"none",border:"none",cursor:"pointer",color:T.mute,fontSize:16}}>✕</button></Card>)}
+    </div>
+  );
+}
+
+// ─── Today Page ───────────────────────────────────────────────────────────────
+function TodayPage({S,upd,grassMsg,setModal,allTracks}){
+  const T=window.__T;
+  const seed=dateSeed();
+
+  function filterTasks(tasks){return tasks.filter(t=>{
+    if(S.phase===1&&PHASE1_LOCKED.includes(t.track))return false;
+    if(!S.cap)return true;
+    if(S.cap==="low")return t.cap==="low"||t.cap==="any";
+    if(S.cap==="ok")return t.cap!=="full";
+    return true;
+  });}
+
+  const allFiltered=filterTasks(S.tasks);
+  const shuffled=seededShuffle(allFiltered,seed);
+  const limit=S.cap==="low"?1:S.cap==="ok"?3:DAILY_LIMIT_FULL();
+  const shown=shuffled.slice(0,limit);
+
+  const activeTrackKeys=S.phase===1
+    ?Object.keys(allTracks).filter(k=>!["sch","soc","gwc","frc","yolo","int"].includes(k))
+    :Object.keys(allTracks).filter(k=>!["sch","soc"].includes(k));
+  const emptyTracks=activeTrackKeys.filter(tk=>!["vol","bio"].includes(tk)&&!S.tasks.some(t=>t.track===tk));
+
+  function setCap(c){upd(s=>({...s,cap:c,capDate:today()}));}
+
+  useEffect(()=>{
+    const done=S.tasks.filter(t=>t.done).length+S.school.filter(a=>a.subs.length&&a.subs.every(s=>s.done)).length;
+    const total=S.tasks.length+S.school.length;
+    const ratio=total?done/total:0;
+    const fill=ratio===0?0:ratio<0.35?1:ratio<0.7?2:3;
+    const key=today();
+    if((S.map[key]||0)!==fill)upd(s=>({...s,map:{...s.map,[key]:fill}}));
+  });
+
+  const tileGrid={display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:10};
+
+  function TileCard({task,isSchool=false,isBiom=false}){
+    const [hov,setHov]=useState(false);
+    const track=isSchool?"sch":isBiom?"bio":task.track;
+    const color=allTracks[track]?.color||"#888";
+    const p=task.subs.length?Math.round(task.subs.filter(s=>s.done).length/task.subs.length*100):(task.done?100:0);
+    return(
+      <div onClick={()=>setModal(task.id)} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+        style={{background:hov?T.surf2:T.surf,border:`1px solid ${hov?T.acc:T.border}`,borderRadius:12,padding:12,cursor:"pointer",transition:"all .15s",userSelect:"none"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+          <Tag track={track} T={T} allTracks={allTracks}/>
+          <span style={{fontSize:10,color:T.mute}}>{(isSchool||isBiom)&&task.due?"due "+task.due:(!isSchool&&!isBiom)?"~"+task.mins+"m":""}</span>
+        </div>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.4,marginBottom:4}}>{task.name}</div>
+        {task.subs.length>0&&<><PBar pct={p} color={color}/><div style={{fontSize:10,color:T.mute,marginTop:3,textAlign:"right"}}>{p}% · {task.subs.filter(s=>s.done).length}/{task.subs.length}</div></>}
+        <div style={{fontSize:10,color:T.acc,marginTop:5}}>tap to expand →</div>
+      </div>
+    );
+  }
+
+  // Today's biom assignments (due today or undone)
+  const todayBiomAssignments=(S.biomAssignments||[]).filter(a=>!a.subs.every(s=>s.done));
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      {!S.cap&&<Card>
+        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:12}}>How charged are you today? 🔋</div>
+        <div style={{display:"flex",gap:8}}>
+          {[{k:"full",icon:"⚡",label:"Fully charged",sub:"Up to 5 tasks"},{k:"ok",icon:"🔋",label:"Running okay",sub:"3 tasks"},{k:"low",icon:"🪫",label:"Low battery",sub:"Just 1 thing"}].map(o=>(
+            <div key={o.k} onClick={()=>setCap(o.k)} style={{flex:1,border:`1px solid ${T.border}`,borderRadius:12,padding:"12px 8px",textAlign:"center",cursor:"pointer",background:T.surf2,transition:"all .15s"}}>
+              <div style={{fontSize:24,marginBottom:5}}>{o.icon}</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.text}}>{o.label}</div>
+              <div style={{fontSize:11,color:T.sub,marginTop:2}}>{o.sub}</div>
+            </div>
+          ))}
+        </div>
+      </Card>}
+      {S.cap&&<div style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:T.sub}}>
+        <span>Today: <strong style={{color:T.text}}>{S.cap==="full"?"⚡ Fully charged":S.cap==="ok"?"🔋 Running okay":"🪫 Low battery"}</strong></span>
+        <BtnN onClick={()=>upd(s=>({...s,cap:null,capDate:null}))} style={{fontSize:11,padding:"3px 10px"}}>Change</BtnN>
+      </div>}
+      <div style={{background:T.streakBg,borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:22}}>🔥</span>
+        <div><div style={{fontSize:13,fontWeight:700,color:T.streakT}}>{S.streak}-day streak</div><div style={{fontSize:11,color:T.streakT,opacity:.8}}>Consistency beats intensity every time.</div></div>
+      </div>
+      <div style={{background:T.grassBg,borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:22}}>🌿</span>
+        <div><div style={{fontSize:13,fontWeight:700,color:T.grassT}}>Touch grass reminder</div><div style={{fontSize:11,color:T.grassT,opacity:.85}}>{grassMsg}</div></div>
+      </div>
+      {emptyTracks.length>0&&(
+        <div style={{background:S.dark?"#2A1F0A":"#FFF8E8",border:"1px solid #D4841A",borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"flex-start",gap:12}}>
+          <span style={{fontSize:20}}>⚠️</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:"#D4841A",marginBottom:3}}>Some tracks need tasks!</div>
+            <div style={{fontSize:12,color:T.sub}}>{emptyTracks.map(tk=>`${allTracks[tk]?.icon} ${allTracks[tk]?.name}`).join(" · ")}</div>
+            <div style={{fontSize:11,color:T.mute,marginTop:4}}>Go to ➕ New task to fill these tracks.</div>
+          </div>
+        </div>
+      )}
+      {S.phase===1&&<div style={{fontSize:11,color:T.mute}}>🔒 GWC, FRC, YOLO+RPi & Internship unlock in Phase 2</div>}
+      {S.cap&&<>
+        <div>
+          <SH T={T}>Today's tasks <span style={{fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10}}>(shuffled daily · {shown.length}/{allFiltered.length} shown)</span></SH>
+          {shown.length?<div style={tileGrid}>{shown.map(t=><TileCard key={t.id} task={t}/>)}</div>:<div style={{fontSize:13,color:T.mute}}>No tasks match this capacity level.</div>}
+        </div>
+        {S.school.length>0&&<div><SH T={T}>School assignments</SH><div style={tileGrid}>{S.school.slice(0,S.cap==="low"?1:999).map(a=><TileCard key={a.id} task={a} isSchool/>)}</div></div>}
+        {todayBiomAssignments.length>0&&<div><SH T={T}>🧬 Biomed due</SH><div style={tileGrid}>{todayBiomAssignments.slice(0,S.cap==="low"?1:999).map(a=><TileCard key={a.id} task={a} isBiom/>)}</div></div>}
+        {S.social.length>0&&<div><SH T={T}>Coming up</SH><div style={tileGrid}>{S.social.map(s=><div key={s.id} style={{background:T.surf,border:`1px solid ${T.border}`,borderRadius:12,padding:12}}><Tag track="soc" T={T} allTracks={allTracks}/><div style={{fontSize:13,fontWeight:700,color:T.text,marginTop:6}}>{s.name}</div><div style={{fontSize:11,color:T.mute,marginTop:3}}>{s.date}{s.time&&" · "+s.time}{s.who&&" · "+s.who}</div></div>)}</div></div>}
+      </>}
+    </div>
+  );
+}
+
+// ─── Week Page ────────────────────────────────────────────────────────────────
+function WeekPage({S,allTracks}){
+  const T=window.__T;
+  const todayD=new Date();
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{fontSize:16,fontWeight:700,color:T.text}}>📅 This week</div>
+      {Array.from({length:7},(_,i)=>{
+        const d=new Date(todayD);d.setDate(todayD.getDate()-todayD.getDay()+i);
+        const isToday=d.toDateString()===todayD.toDateString();
+        const key=d.toISOString().slice(0,10),dow=DOW[d.getDay()];
+        const soc=S.social.filter(s=>s.date===key);
+        const sch=S.school.filter(a=>a.due===key);
+        const bio=(S.biomAssignments||[]).filter(a=>a.due===key);
+        const satD=S.satLog.filter(l=>l.date===key);
+        const vlnD=S.vlnLog.filter(l=>l.date===key);
+        const volD=(S.volLog||[]).filter(l=>l.date===key);
+        const intH=S.phase===2&&S.intHours[dow];
+        return(
+          <Card key={i} style={{border:isToday?`2px solid ${T.acc}`:undefined}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+              <span style={{fontSize:13,fontWeight:700,color:isToday?T.acc:T.text}}>{DOW[i]} {d.getDate()}</span>
+              {isToday&&<span style={{fontSize:11,background:T.accBg,color:T.acc,padding:"1px 8px",borderRadius:20,fontWeight:700}}>today</span>}
+              {intH&&!intH.off&&<span style={{fontSize:11,background:T.surf2,color:T.sub,padding:"1px 8px",borderRadius:20}}>💼 {intH.s}–{intH.e}</span>}
+            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+              {soc.map((s,j)=><span key={j} style={{fontSize:11,background:BUILTIN_TRACKS.soc.light,color:BUILTIN_TRACKS.soc.color,padding:"2px 9px",borderRadius:20}}>👥 {s.name}</span>)}
+              {sch.map((a,j)=><span key={j} style={{fontSize:11,background:BUILTIN_TRACKS.sch.light,color:BUILTIN_TRACKS.sch.color,padding:"2px 9px",borderRadius:20}}>📚 {a.name} due</span>)}
+              {bio.map((a,j)=><span key={j} style={{fontSize:11,background:BUILTIN_TRACKS.bio.light,color:BUILTIN_TRACKS.bio.color,padding:"2px 9px",borderRadius:20}}>🧬 {a.name} due</span>)}
+              {satD.map((l,j)=><span key={j} style={{fontSize:11,background:BUILTIN_TRACKS.sat.light,color:BUILTIN_TRACKS.sat.color,padding:"2px 9px",borderRadius:20}}>✏️ SAT {l.mins}m</span>)}
+              {vlnD.map((l,j)=><span key={j} style={{fontSize:11,background:BUILTIN_TRACKS.vln.light,color:BUILTIN_TRACKS.vln.color,padding:"2px 9px",borderRadius:20}}>🎻 {l.mins}m</span>)}
+              {volD.map((l,j)=><span key={j} style={{fontSize:11,background:BUILTIN_TRACKS.vol.light,color:BUILTIN_TRACKS.vol.color,padding:"2px 9px",borderRadius:20}}>🤝 {l.org} {l.hours}h</span>)}
+              {!soc.length&&!sch.length&&!bio.length&&!satD.length&&!vlnD.length&&!volD.length&&<span style={{fontSize:12,color:T.mute}}>Nothing scheduled</span>}
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── APP ROOT ─────────────────────────────────────────────────────────────────
+function App(){
+  const [S,setS]=useState(()=>{
+    const saved=load();
+    if(saved){const d=defaults();return{...d,...saved,rj:{...d.rj,...(saved.rj||{})},intHours:{...d.intHours,...(saved.intHours||{})},customTracks:{...(saved.customTracks||{})}};}
+    return defaults();
+  });
+  const [page,setPage]=useState("today");
+  const [modal,setModal]=useState(null);
+  const [grassMsg]=useState(()=>GRASS[Math.floor(Math.random()*GRASS.length)]);
+  const upd=useCallback((fn)=>setS(prev=>{const next=typeof fn==="function"?fn({...prev}):fn;save(next);return next;}),[]);
+
+  // Merge built-in tracks with custom tracks
+  const allTracks={...BUILTIN_TRACKS,...(S.customTracks||{})};
+
+  const T=mkT(S.dark);
+  window.__T=T;
+
+  useEffect(()=>{
+    const todayStr=today();
+    setS(prev=>{
+      let streak=prev.streak||0;
+      if(prev.lastDate){const diff=(new Date(todayStr)-new Date(prev.lastDate))/86400000;if(diff>1)streak=0;else if(diff>=1)streak=streak+1;}
+      const cap=prev.capDate===todayStr?prev.cap:null;
+      const capDate=prev.capDate===todayStr?prev.capDate:null;
+      const next={...prev,lastDate:todayStr,streak,cap,capDate};
+      save(next);return next;
+    });
+  },[]);
+
+  useEffect(()=>{save(S);},[S]);
+
+  // Build custom track nav items
+  const customTrackNavItems=Object.entries(S.customTracks||{}).map(([k,v])=>({p:`t-${k}`,icon:v.icon,label:v.name}));
+
+  const NAV=[
+    {sec:"Main"},
+    {p:"today",icon:"🏠",label:"Today"},
+    {p:"week",icon:"📅",label:"This week"},
+    {sec:"Tracks"},
+    {p:"t-sat",icon:"✏️",label:"SAT Prep"},
+    {p:"t-res",icon:"🔬",label:"Research"},
+    {p:"t-vln",icon:"🎻",label:"Violin"},
+    {p:"t-vol",icon:"🤝",label:"Volunteering"},
+    {p:"t-bio",icon:"🧬",label:"Biomed"},
+    {p:"t-gwc",icon:"💻",label:"Girls Who Code"},
+    {p:"t-frc",icon:"🤖",label:"FRC / Java"},
+    {p:"t-yolo",icon:"📷",label:"YOLO + RPi"},
+    {p:"t-int",icon:"💼",label:"Internship"},
+    ...customTrackNavItems,
+    {p:"manage-tracks",icon:"🗂️",label:"Add track"},
+    {sec:"College & Aid"},
+    {p:"colleges",icon:"🎓",label:"Colleges"},
+    {p:"scholarships",icon:"💰",label:"Scholarships"},
+    {sec:"Logs & Journal"},
+    {p:"research",icon:"📓",label:"Research journal"},
+    {sec:"Add"},
+    {p:"add-task",icon:"➕",label:"New task"},
+    {p:"add-school",icon:"📚",label:"School"},
+    {p:"add-social",icon:"👥",label:"Social"},
+    {p:"settings",icon:"⚙️",label:"Settings"},
+  ];
+
+  function pageContent(){
+    if(page==="today")      return<TodayPage S={S} upd={upd} grassMsg={grassMsg} setModal={setModal} allTracks={allTracks}/>;
+    if(page==="week")       return<WeekPage S={S} allTracks={allTracks}/>;
+    if(page==="t-vol")      return<VolunteeringPage S={S} upd={upd}/>;
+    if(page==="t-bio")      return<BiomPage S={S} upd={upd} setModal={setModal}/>;
+    if(page==="manage-tracks") return<ManageTracksPage S={S} upd={upd} allTracks={allTracks}/>;
+    if(page.startsWith("t-")) return<TrackPage track={page.slice(2)} S={S} upd={upd} setModal={setModal} allTracks={allTracks}/>;
+    if(page==="colleges")   return<CollegePage S={S} upd={upd}/>;
+    if(page==="scholarships")return<ScholarshipsPage S={S} upd={upd}/>;
+    if(page==="research")   return<RJPage S={S} upd={upd}/>;
+    if(page==="add-task")   return<AddTaskPage S={S} upd={upd} allTracks={allTracks}/>;
+    if(page==="add-school") return<AddSchoolPage S={S} upd={upd}/>;
+    if(page==="add-social") return<AddSocialPage S={S} upd={upd}/>;
+    if(page==="settings")   return<SettingsPage S={S} upd={upd}/>;
+    return null;
+  }
+
+  return(
+    <div style={{padding:12,background:T.bg,minHeight:"100vh",fontFamily:"'DM Sans',sans-serif"}}>
+      <div style={{display:"grid",gridTemplateColumns:"180px 1fr",minHeight:700,border:`1px solid ${T.border}`,borderRadius:14,overflow:"hidden",boxShadow:S.dark?"0 4px 32px rgba(0,0,0,.4)":"0 4px 24px rgba(100,90,160,.12)"}}>
+        {/* Sidebar */}
+        <div style={{background:T.surf,borderRight:`1px solid ${T.border}`,padding:"10px 0",display:"flex",flexDirection:"column",gap:1,overflowY:"auto"}}>
+          <div style={{margin:"0 10px 10px",padding:"10px 12px",background:T.accBg,borderRadius:10,textAlign:"center"}}>
+            <div style={{fontSize:16,fontWeight:700,color:T.acc,fontFamily:"'Lora',serif"}}>Momentum</div>
+            <div style={{fontSize:10,color:T.mute,marginTop:1}}>{S.phase===1?"🌱 Phase 1":"🌸 Phase 2"}</div>
+          </div>
+          {NAV.map((n,i)=>{
+            if(n.sec)return<div key={i} style={{fontSize:10,fontWeight:700,color:T.mute,padding:"8px 12px 2px",letterSpacing:".07em",textTransform:"uppercase"}}>{n.sec}</div>;
+            const on=page===n.p;
+            const trackKey=n.p?.startsWith("t-")?n.p.slice(2):null;
+            const locked=trackKey&&S.phase===1&&PHASE1_LOCKED.includes(trackKey);
+            return(
+              <div key={i} onClick={()=>setPage(n.p)}
+                style={{display:"flex",alignItems:"center",gap:7,padding:"6px 12px",fontSize:12,color:on?T.acc:locked?T.mute:T.sub,cursor:"pointer",borderLeft:on?`3px solid ${T.acc}`:"3px solid transparent",background:on?T.accBg:"transparent",fontWeight:on?700:400,transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden"}}>
+                <span style={{fontSize:14,flexShrink:0,opacity:locked?.5:1}}>{n.icon}</span>
+                <span style={{overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{n.label}</span>
+                {locked&&<span style={{fontSize:9,color:T.mute,flexShrink:0}}>🔒</span>}
+              </div>
+            );
+          })}
+        </div>
+        {/* Main */}
+        <div style={{background:T.bg,padding:"16px 18px",overflowY:"auto",display:"flex",flexDirection:"column",gap:14}}>
+          {pageContent()}
+        </div>
+      </div>
+      {modal&&<TaskModal taskId={modal} S={S} upd={upd} onClose={()=>setModal(null)} allTracks={allTracks}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
