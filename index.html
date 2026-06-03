@@ -59,6 +59,7 @@ function defaults(){
     dark:false,phase:1,streak:0,lastDate:null,capDate:null,cap:null,
     projTitle:"",nextId:200,vlnGoalMins:30,volHoursGoal:10,
     customTracks:{}, // user-added tracks: {key:{name,color,light,icon}}
+    pinnedTaskIds:[], // tasks manually assigned to today
     intHours:{
       Mon:{s:"09:00",e:"17:00",off:false},Tue:{s:"09:00",e:"17:00",off:false},
       Wed:{s:"09:00",e:"17:00",off:false},Thu:{s:"09:00",e:"17:00",off:false},
@@ -933,6 +934,19 @@ function TodayPage({S,upd,grassMsg,setModal,allTracks}){
       )}
       {S.phase===1&&<div style={{fontSize:11,color:T.mute}}>🔒 GWC, FRC, YOLO+RPi & Internship unlock in Phase 2</div>}
       {S.cap&&<>
+        {/* Pinned tasks */}
+        {(S.pinnedTaskIds||[]).length>0&&(()=>{
+          const pinned=[...S.tasks,...S.school,...(S.biomAssignments||[])].filter(t=>(S.pinnedTaskIds||[]).includes(t.id));
+          if(!pinned.length)return null;
+          return<div>
+            <SH T={T}>📌 Assigned today <span style={{fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10}}>({pinned.length} pinned from All tasks)</span></SH>
+            <div style={tileGrid}>{pinned.map(t=>{
+              const isSchool=!!S.school.find(a=>a.id===t.id);
+              const isBiom=!!(S.biomAssignments||[]).find(a=>a.id===t.id);
+              return<TileCard key={t.id} task={t} isSchool={isSchool} isBiom={isBiom}/>;
+            })}</div>
+          </div>;
+        })()}
         <div>
           <SH T={T}>Today's tasks <span style={{fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10}}>(shuffled daily · {shown.length}/{allFiltered.length} shown)</span></SH>
           {shown.length?<div style={tileGrid}>{shown.map(t=><TileCard key={t.id} task={t}/>)}</div>:<div style={{fontSize:13,color:T.mute}}>No tasks match this capacity level.</div>}
@@ -986,6 +1000,182 @@ function WeekPage({S,allTracks}){
   );
 }
 
+// ─── All Tasks Page ───────────────────────────────────────────────────────────
+function AllTasksPage({S,upd,setModal,allTracks}){
+  const T=window.__T;
+  const [filterTrack,setFilterTrack]=useState("all");
+  const [filterStatus,setFilterStatus]=useState("all"); // all | todo | done
+  const [search,setSearch]=useState("");
+  const [assignedIds,setAssignedIds]=useState(()=>new Set(S.pinnedTaskIds||[]));
+
+  // Keep pinnedTaskIds in sync with state
+  useEffect(()=>{
+    upd(s=>({...s,pinnedTaskIds:[...assignedIds]}));
+  },[assignedIds]);
+
+  // All tasks from all sources
+  const allItems=[
+    ...S.tasks.map(t=>({...t,_type:"task"})),
+    ...S.school.map(a=>({...a,track:"sch",_type:"school"})),
+    ...(S.biomAssignments||[]).map(a=>({...a,track:"bio",_type:"biom"})),
+  ];
+
+  // Filter
+  const filtered=allItems.filter(t=>{
+    if(filterTrack!=="all"&&t.track!==filterTrack)return false;
+    if(filterStatus==="done"){
+      const done=t.subs?.length?t.subs.every(s=>s.done):t.done;
+      if(!done)return false;
+    }
+    if(filterStatus==="todo"){
+      const done=t.subs?.length?t.subs.every(s=>s.done):t.done;
+      if(done)return false;
+    }
+    if(search.trim()){
+      const q=search.toLowerCase();
+      if(!t.name.toLowerCase().includes(q)&&!(allTracks[t.track]?.name||"").toLowerCase().includes(q))return false;
+    }
+    return true;
+  });
+
+  // Track options for filter
+  const trackOptions=[...new Set(allItems.map(t=>t.track))];
+
+  function toggleAssign(id){
+    setAssignedIds(prev=>{
+      const next=new Set(prev);
+      if(next.has(id))next.delete(id);else next.add(id);
+      return next;
+    });
+  }
+
+  function getProgress(t){
+    if(!t.subs||t.subs.length===0)return t.done?100:0;
+    return Math.round(t.subs.filter(s=>s.done).length/t.subs.length*100);
+  }
+
+  const assignedCount=assignedIds.size;
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:700,color:T.text}}>📋 All tasks</div>
+          <div style={{fontSize:12,color:T.sub,marginTop:2}}>{allItems.length} total · {assignedCount} assigned to today</div>
+        </div>
+        {assignedCount>0&&(
+          <div style={{background:T.accBg,border:`1px solid ${T.acc}`,borderRadius:10,padding:"6px 14px",fontSize:12,fontWeight:700,color:T.acc}}>
+            ⚡ {assignedCount} pinned to today
+          </div>
+        )}
+      </div>
+
+      {/* Search + filters */}
+      <Card style={{padding:"10px 12px"}}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <Inp value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search tasks…"/>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {/* Track filter */}
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
+              {["all",...trackOptions].map(k=>{
+                const on=filterTrack===k;
+                const tr=allTracks[k];
+                return(
+                  <div key={k} onClick={()=>setFilterTrack(k)}
+                    style={{fontSize:11,padding:"4px 10px",borderRadius:20,cursor:"pointer",border:`1px solid ${on?(tr?.color||T.acc):T.border}`,background:on?(tr?.light||T.accBg):"transparent",color:on?(tr?.color||T.acc):T.sub,fontWeight:on?700:400,transition:"all .12s",whiteSpace:"nowrap"}}>
+                    {k==="all"?"All tracks":`${tr?.icon||""} ${tr?.name||k}`}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          {/* Status filter */}
+          <div style={{display:"flex",gap:6}}>
+            {[["all","All"],["todo","To-do"],["done","Done ✓"]].map(([v,label])=>(
+              <div key={v} onClick={()=>setFilterStatus(v)}
+                style={{fontSize:11,padding:"4px 12px",borderRadius:20,cursor:"pointer",border:`1px solid ${filterStatus===v?T.acc:T.border}`,background:filterStatus===v?T.accBg:"transparent",color:filterStatus===v?T.acc:T.sub,fontWeight:filterStatus===v?700:400,transition:"all .12s"}}>
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* Info callout */}
+      <div style={{background:T.surf2,borderRadius:10,padding:"9px 13px",fontSize:12,color:T.sub,display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:16}}>📌</span>
+        <span>Tap <strong style={{color:T.text}}>Assign to today</strong> on any task to pin it to your Today page. Tap again to unpin.</span>
+      </div>
+
+      {/* Task list */}
+      {filtered.length===0&&(
+        <div style={{fontSize:13,color:T.mute,textAlign:"center",padding:"24px 0"}}>
+          {search?"No tasks match your search.":"No tasks here yet."}
+        </div>
+      )}
+      {filtered.map(t=>{
+        const pct=getProgress(t);
+        const tr=allTracks[t.track];
+        const isAssigned=assignedIds.has(t.id);
+        const isDone=t.subs?.length?t.subs.every(s=>s.done):t.done;
+        return(
+          <Card key={t.id} style={{opacity:isDone?.65:1,transition:"opacity .2s"}}>
+            <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+              {/* Color accent bar */}
+              <div style={{width:3,borderRadius:2,background:tr?.color||T.acc,alignSelf:"stretch",flexShrink:0,minHeight:40}}/>
+              <div style={{flex:1,minWidth:0}}>
+                {/* Top row */}
+                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:5,gap:8}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:20,background:tr?.light||T.surf2,color:tr?.color||T.acc,marginRight:6}}>
+                      {tr?.icon} {tr?.name||t.track}
+                    </span>
+                    <div style={{fontSize:14,fontWeight:700,color:isDone?T.mute:T.text,marginTop:5,textDecoration:isDone?"line-through":"none"}}>{t.name}</div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+                    {t.mins&&<span style={{fontSize:11,color:T.mute}}>~{t.mins}m</span>}
+                    {t.due&&<span style={{fontSize:11,background:T.surf2,color:T.sub,padding:"1px 7px",borderRadius:20}}>due {t.due}</span>}
+                  </div>
+                </div>
+                {/* Progress bar */}
+                {t.subs?.length>0&&(
+                  <div style={{marginBottom:6}}>
+                    <PBar pct={pct} color={tr?.color||T.acc} h={5}/>
+                    <div style={{fontSize:10,color:T.mute,marginTop:2}}>{t.subs.filter(s=>s.done).length}/{t.subs.length} subtasks · {pct}%</div>
+                  </div>
+                )}
+                {/* Subtask preview */}
+                {t.subs?.length>0&&(
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+                    {t.subs.slice(0,4).map((sub,si)=>(
+                      <span key={si} style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:sub.done?T.success+"22":T.surf2,color:sub.done?T.success:T.mute,textDecoration:sub.done?"line-through":"none"}}>
+                        {sub.done?"✓ ":""}{sub.t}
+                      </span>
+                    ))}
+                    {t.subs.length>4&&<span style={{fontSize:10,color:T.mute}}>+{t.subs.length-4} more</span>}
+                  </div>
+                )}
+                {/* Action buttons */}
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  <button onClick={()=>setModal(t.id)}
+                    style={{fontSize:11,padding:"4px 12px",border:`1px solid ${T.border}`,borderRadius:8,background:T.surf,color:T.sub,cursor:"pointer",fontFamily:"inherit"}}>
+                    ✏️ Open &amp; edit
+                  </button>
+                  <button onClick={()=>toggleAssign(t.id)}
+                    style={{fontSize:11,padding:"4px 12px",border:`1px solid ${isAssigned?T.acc:T.border}`,borderRadius:8,background:isAssigned?T.accBg:T.surf,color:isAssigned?T.acc:T.sub,cursor:"pointer",fontFamily:"inherit",fontWeight:isAssigned?700:400,transition:"all .15s"}}>
+                    {isAssigned?"📌 Assigned to today":"📌 Assign to today"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 function App(){
   const [S,setS]=useState(()=>{
@@ -1025,6 +1215,7 @@ function App(){
     {sec:"Main"},
     {p:"today",icon:"🏠",label:"Today"},
     {p:"week",icon:"📅",label:"This week"},
+    {p:"all-tasks",icon:"📋",label:"All tasks"},
     {sec:"Tracks"},
     {p:"t-sat",icon:"✏️",label:"SAT Prep"},
     {p:"t-res",icon:"🔬",label:"Research"},
@@ -1052,6 +1243,7 @@ function App(){
   function pageContent(){
     if(page==="today")      return<TodayPage S={S} upd={upd} grassMsg={grassMsg} setModal={setModal} allTracks={allTracks}/>;
     if(page==="week")       return<WeekPage S={S} allTracks={allTracks}/>;
+    if(page==="all-tasks")  return<AllTasksPage S={S} upd={upd} setModal={setModal} allTracks={allTracks}/>;
     if(page==="t-vol")      return<VolunteeringPage S={S} upd={upd}/>;
     if(page==="t-bio")      return<BiomPage S={S} upd={upd} setModal={setModal}/>;
     if(page==="manage-tracks") return<ManageTracksPage S={S} upd={upd} allTracks={allTracks}/>;
